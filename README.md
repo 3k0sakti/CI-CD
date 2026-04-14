@@ -1,6 +1,5 @@
 # Hands-On CI/CD dengan Jenkins & Docker
 
-> Mata Kuliah: DevSecOps | Universitas Brawijaya  
 > Topik: Continuous Integration / Continuous Deployment
 
 ---
