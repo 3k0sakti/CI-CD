@@ -225,7 +225,7 @@ Pada lab ini, kamu akan membangun pipeline CI/CD menggunakan **Jenkins** untuk m
                            │ webhook / polling
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              VM-0: Jenkins Server (10.34.100.200)              │
+│              VM-0: Jenkins Server (10.34.100.189)              │
 │  ┌──────────────┐  ┌────────────────┐  ┌────────────────────┐  │
 │  │   Jenkins    │  │  Docker        │  │  SSH Key / Agent   │  │
 │  │  (port 8080) │  │  (build image) │  │  (deploy ke VMs)   │  │
