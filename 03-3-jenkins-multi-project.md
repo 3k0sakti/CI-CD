@@ -89,25 +89,50 @@ Setiap kelompok memiliki **1 Pipeline Job** yang terhubung ke repository GitHub 
 
 ## 🔁 4. Jenkinsfile Template (Tanpa Docker Hub)
 
-Setiap kelompok menaruh `Jenkinsfile` di root repository GitHub mereka. Pipeline hanya melakukan **clone → build → test → deploy** secara lokal di app server, **tanpa push ke Docker Hub**.
+Setiap kelompok menaruh `Jenkinsfile` di root repository GitHub mereka. Pipeline hanya melakukan **clone → build → test → deploy** secara lokal, **tanpa push ke Docker Hub**.
 
-### Contoh `Jenkinsfile` (template standar):
+Template ini dirancang agar **semua 4 pipeline dapat berjalan bersamaan** tanpa saling konflik:
+
+- Nama image, container, dan port **unik per kelompok** menggunakan `${JOB_NAME}`
+- `disableConcurrentBuilds()` mencegah satu job bertabrakan dengan dirinya sendiri
+- Cleanup hanya menghapus image **milik job sendiri**, tidak menyentuh image kelompok lain
+
+### Prasyarat: Jumlah Executor Jenkins
+
+Agar 4 pipeline dapat berjalan **bersamaan**, pastikan jumlah executor Jenkins cukup:
+
+1. **Manage Jenkins** → **Manage Nodes and Clouds** → klik node **Built-In Node**
+2. Ubah **Number of executors** menjadi **4** (atau lebih)
+3. Klik **Save**
+
+> Default Jenkins hanya **2 executor**. Jika kurang dari 4, pipeline ketiga dan keempat akan antri menunggu.
+
+---
+
+### Contoh `Jenkinsfile` (template per kelompok):
 
 ```groovy
 pipeline {
     agent any
 
+    // Mencegah build yang sama berjalan dua kali di job yang sama
+    // (tidak mempengaruhi job kelompok lain — mereka tetap bisa jalan bersamaan)
+    options {
+        disableConcurrentBuilds()
+    }
+
     environment {
         IMAGE_NAME     = "${JOB_NAME}"
         IMAGE_TAG      = "${BUILD_NUMBER}"
+        IMAGE_PREV_TAG = "${BUILD_NUMBER.toInteger() - 1}"
         CONTAINER_NAME = "${JOB_NAME}-app"
-        APP_PORT       = "8080"
+        APP_PORT       = "8081"   // Ganti per kelompok: 8081 / 8082 / 8083 / 8084
     }
 
     stages {
         stage('Clone') {
             steps {
-                // Kode di-clone otomatis oleh Jenkins dari SCM yang dikonfigurasi
+                // Otomatis clone dari SCM yang dikonfigurasi — tidak perlu hardcode URL
                 checkout scm
             }
         }
@@ -120,7 +145,7 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh "docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python -m pytest tests/ || true"
+                sh "docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python -m pytest tests/ -v"
             }
         }
 
@@ -134,27 +159,42 @@ pipeline {
 
         stage('Cleanup') {
             steps {
-                // Hapus image lama agar disk tidak penuh
-                sh "docker image prune -f"
+                // Hanya hapus image LAMA milik job ini — tidak menyentuh image kelompok lain
+                // yang mungkin sedang berjalan bersamaan
+                script {
+                    def prevTag = BUILD_NUMBER.toInteger() - 1
+                    sh "docker rmi ${IMAGE_NAME}:${prevTag} || true"
+                }
             }
         }
     }
 
     post {
         success {
-            echo "Deploy ${JOB_NAME} build #${BUILD_NUMBER} berhasil!"
+            echo "✅ Deploy ${JOB_NAME} build #${BUILD_NUMBER} berhasil! Akses di port ${APP_PORT}"
         }
         failure {
-            echo "Build ${JOB_NAME} gagal. Periksa log di atas."
+            echo "❌ Build ${JOB_NAME} #${BUILD_NUMBER} gagal. Periksa log di atas."
+            // Pastikan container lama tidak tertinggal jika deploy gagal di tengah jalan
+            sh "docker stop ${CONTAINER_NAME} || true"
+            sh "docker rm   ${CONTAINER_NAME} || true"
         }
     }
 }
 ```
 
-> **Catatan:**
-> - `checkout scm` otomatis mengambil kode dari repository yang dikonfigurasi di job, **tidak perlu hardcode URL**.
-> - `${JOB_NAME}` akan terisi nama job masing-masing kelompok, sehingga image dan container antar kelompok tidak saling bentrok.
-> - Setiap kelompok hanya perlu copy template ini ke repository mereka dan sesuaikan `APP_PORT` jika perlu.
+---
+
+### Ringkasan isolasi antar kelompok:
+
+| Aspek              | Kelompok A          | Kelompok B          | Kelompok C          | Kelompok D          |
+|--------------------|---------------------|---------------------|---------------------|---------------------|
+| Nama image         | `kelompok-a:<n>`    | `kelompok-b:<n>`    | `kelompok-c:<n>`    | `kelompok-d:<n>`    |
+| Nama container     | `kelompok-a-app`    | `kelompok-b-app`    | `kelompok-c-app`    | `kelompok-d-app`    |
+| Port host          | `8081`              | `8082`              | `8083`              | `8084`              |
+| Cleanup            | Hapus image sendiri | Hapus image sendiri | Hapus image sendiri | Hapus image sendiri |
+
+> Dengan isolasi ini, push dari keempat kelompok secara bersamaan akan memicu 4 pipeline **paralel** tanpa saling mengganggu.
 
 ---
 
